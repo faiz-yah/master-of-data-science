@@ -1,0 +1,5 @@
+cat("Enter two numbers:")
+number_input <- readLines("stdin", 2)
+num1 <- as.numeric(number_input[1])
+num2 <- as.numeric(number_input[2])
+cat(num1, "+", num2, "=", num1+num2)
