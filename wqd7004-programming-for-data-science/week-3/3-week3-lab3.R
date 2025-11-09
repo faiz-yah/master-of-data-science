@@ -1,5 +1,8 @@
 # WQD7004 Programming for Data Science
 # Lab 3 Data Structure
+
+# Faiz Yah 2Nov25
+
 # 1. Create a list using R with the following values g1=1:10, g2="R Programming", g3=
 # "HTML". Then, count the number of objects in the list. After that, get the length of
 # the first two vectors of the given list.
