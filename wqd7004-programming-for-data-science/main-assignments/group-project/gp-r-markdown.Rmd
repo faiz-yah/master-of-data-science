@@ -1,0 +1,1154 @@
+---
+title: "Group Project"
+author: "Group 1"
+date: "2025-12-29"
+output:
+  html_document:
+    toc: true
+  word_document:
+    toc: true
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+
+# 1. Introduction
+## 1.1 Project Background
+In recent years, payment methods for transactions have seen a significant transformation. The use of physical cash has gradually transitioned to cashless payment systems, including debit cards, credit cards, and QR code payments. However, this rise in cashless transactions has been accompanied by a parallel increase in credit card fraud incidents. Credit card fraudulent transactions occur when sellers do not receive payment or cardholders receive unauthorised charges. Recent statistics in Malaysia reveal that fraud has caused [cumulative losses of staggering RM52.02 billion](https://fintechnews.my/48707/security/financial-crime-malaysia/), underscoring the severity of this problem. The consequences of credit card fraud extend beyond immediate financial losses; it affects equally merchants' and institutions' reputation, compromises users' credit scores, and ultimately causes loss of trust towards digital solutions.
+
+## 1.2 Problem Statement
+Despite substantial efforts to combat credit card fraud through traditional rule-based systems and manual review processes, these approaches face significant limitations such as being labour intensive and hard to scale. This calls for a critical need for an automated solution that can accurately identify fraudulent transactions in real-time. Machine learning approaches are promising with their capacity to detect the pattern complexity of fraudulent transactions and anomalies that might be overlooked by traditional techniques.
+
+## 1.3 Project Objectives
+With the proliferation of credit card fraud, this project aims to leverage machine learning techniques to develop a credit card fraud detection solution. Two primary objectives are defined as follows:
+
+1. **Fraud Detection (Classification Task):**
+
+* Develop binary classification models that accurately identify whether a transaction is fraudulent or legitimate.
+* Allow stakeholders to investigate transactions that are flagged as fraud, identify the accounts involved, and take appropriate preventive actions such as freezing the transaction and blacklisting the associated accounts.
+* Provide interpretable insights into the key features that contribute to fraud detection, which allow for an improved understanding of the characteristics of fraudulent behavior.
+
+2. **Transaction Amount Prediction (Regression Task):**
+
+* Develop regressor models that predict the transaction amount.
+* Serve as a supplementary extensive analysis tool to understand the complex relationship between transaction features and transaction amount.
+* Enable stakeholders to identify factors that correlate with high-value transactions which contribute to an elevated risk assessment strategy.
+
+
+## 1.4 Dataset Information
+- **Source**: Kaggle dataset "Credit Card Fraud Data" ([link](https://www.kaggle.com/datasets/neharoychoudhury/credit-card-fraud-data))
+- **Size**: 14,446 transactions × 15 features (Dimension of 216,690 data points)
+- **Target Variables**:
+  - `is_fraud`: Binary indicator (1 = fraud, 0 = legitimate)
+  - `amt`: Transaction amount (for regression analysis)
+
+## 1.5 Environment Setup
+```{r install-packages, eval=FALSE}
+install.packages(c(
+  # Data manipulation
+  "tidyverse", "dplyr", "readr", "stringr", "lubridate", "tidyr",
+  # Preprocessing
+  "caret", "geosphere", "fastDummies", 
+  # Machine Learning
+  "smotefamily", "randomForest", "xgboost", "lightgbm", "e1071", "ranger",
+  # Modeling framework
+  "tidymodels", "themis", "broom", 
+  # Evaluation
+  "PRROC", "pROC", "fastshap",
+  # Visualization
+  "ggplot2", "gridExtra", "vip","SHAPforxgboost", "shapviz"
+))
+```
+
+```{r load-packages}
+# Data manipulation and visualization
+library(tidyverse)
+library(lubridate)
+library(gridExtra)
+library(shapviz)
+
+# Machine learning
+library(caret)
+library(xgboost)
+library(lightgbm)
+library(randomForest)
+library(e1071)
+library(glmnet)
+library(tidymodels)
+library(SHAPforxgboost)
+
+# Evaluation and utilities
+library(pROC)
+library(PRROC)
+library(vip)
+library(smotefamily)
+library(FNN)
+library(geosphere)
+library(fastshap)
+
+set.seed(123)
+```
+
+# 2. Exploratory Data Analysis (EDA)
+## 2.1 Data Loading and Overview
+```{r load-and-initialise-data}
+# Load dataset
+fraud_raw <- read_csv("fraud_data.csv", show_col_types = FALSE)
+
+# Overview of data
+cat("Dataset dimensions:", nrow(fraud_raw), "rows,", ncol(fraud_raw), "columns\n")
+str(fraud_raw)
+
+# Create working dataframe with preprocessing
+fraud_df <- fraud_raw %>%
+  distinct() %>%
+  mutate(
+    is_fraud = factor(is_fraud, levels = c(0, 1), labels = c("Legit", "Fraud")),
+    amt = as.numeric(amt),
+    trans_date = dmy_hm(trans_date_trans_time),
+    trans_month = month(trans_date, label = TRUE, abbr = TRUE),
+    trans_hour = hour(trans_date),
+    trans_weekday = wday(trans_date, label = TRUE)
+  )
+
+# Check for missing values
+cat("\nMissing values per column:\n")
+print(colSums(is.na(fraud_df)))
+```
+
+
+## 2.2 Class Distribution
+```{r identify-class-distribution, fig.height=4, fig.width=10}
+# Class distribution
+fraud_counts <- table(fraud_df$is_fraud)
+pie(fraud_counts,
+    main = "Fraud vs Legit Transactions",
+    col = c("lightgreen", "red"),
+    labels = paste0(names(fraud_counts), "\n", fraud_counts, " (",
+                    round(prop.table(fraud_counts) * 100, 1), "%)"))
+```
+**Key Finding**: This is an imbalanced dataset with fraud accounting for only 12.4% of the total, signifying that there is a need for imbalance data strategy to be implemented for the classification task.
+
+
+## 2.3 Transaction Amount Analysis
+### 2.3.1 Summary Statistics
+```{r amount-summary}
+# Calculate summary for the total dataset
+total_stat <- fraud_df %>%
+  summarise(
+    Group = "All Transactions",
+    Min = min(amt),
+    Median = median(amt),
+    Mean = mean(amt),
+    Max = max(amt),
+    SD = sd(amt),
+    Count = n()
+  )
+
+# Calculate summary grouped by fraud status
+class_stat <- fraud_df %>%
+  group_by(is_fraud) %>%
+  summarise(
+    Min = min(amt),
+    Median = median(amt),
+    Mean = mean(amt),
+    Max = max(amt),
+    SD = sd(amt),
+    Count = n()
+  ) %>%
+  rename(Group = is_fraud) %>%
+  mutate(Group = as.character(Group))
+
+# Summary of amt, amt that is legit and amt that is fraud
+combined_summary <- bind_rows(total_stat, class_stat)
+print(combined_summary)
+```
+**Key Finding**: Fraudulent transactions have a higher mean ($518 compared to $66) and median ($357 compared to $46) amount with larger variability (standard deviation of $389 compared to $114). This indicates that scammers generally transact a higher amount for their fraudulent operations.
+
+### 2.3.2 Amount Distribution
+```{r amount-distribution, fig.height=4, fig.width=10}
+# Overall distribution
+p1 <- ggplot(fraud_df, aes(x = amt)) +
+  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.7) +
+  labs(title = "All Transactions", x = "Amount ($)", y = "Frequency") +
+  theme_minimal()
+
+# Low-value transactions
+p2 <- ggplot(fraud_df %>% filter(amt < 500), aes(x = amt, fill = is_fraud)) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.6) +
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  labs(title = "Low-Value (< $500)", x = "Amount ($)", y = "Frequency", fill = "Status") +
+  theme_minimal()
+
+# High-value transactions
+p3 <- ggplot(fraud_df %>% filter(amt >= 500), aes(x = amt, fill = is_fraud)) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.6) +
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  labs(title = "High-Value (≥ $500)", x = "Amount ($)", y = "Frequency", fill = "Status") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+**Key Finding**: A large majority of fraud occurs for values that are above $500, while legitimate transactions fall in the range that is below $500, indicating once again that fraudsters tend to transact with higher amounts.
+
+## 2.4 Geographic Distribution Analysis
+### 2.4.1 State-Level Patterns
+```{r state-analysis, fig.height=4, fig.width=10}
+# Calculate state-level metrics
+state_summary <- fraud_df %>%
+  group_by(state, is_fraud) %>%
+  summarise(total_amt = sum(amt, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = is_fraud, values_from = total_amt, values_fill = 0) %>%
+  mutate(
+    total = Legit + Fraud,
+    fraud_rate = Fraud / total * 100
+  ) %>%
+  arrange(desc(fraud_rate))
+
+# Top 10 states by fraud rate
+top_fraud_states <- head(state_summary, 10)
+
+ggplot(top_fraud_states, aes(x = reorder(state, fraud_rate), y = fraud_rate)) +
+  geom_col(fill = "red", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Top 10 States by Fraud Loss Rate",
+       x = "State", y = "Fraud Loss Rate (%)") +
+  theme_minimal()
+```
+**Key Finding**: The graph displays that state AK shows the highest fraud rate at around 75%, followed by state NE at around 63%, indicating that geographic patterns matter.
+
+### 2.4.2 City-Level Patterns
+```{r city-analysis, fig.height=4, fig.width=10}
+# Top 10 cities by fraud amount
+city_fraud <- fraud_df %>%
+  filter(is_fraud == "Fraud") %>%
+  group_by(city) %>%
+  summarise(fraud_amt = sum(amt, na.rm = TRUE)) %>%
+  arrange(desc(fraud_amt)) %>%
+  head(10)
+
+ggplot(city_fraud, aes(x = reorder(city, fraud_amt), y = fraud_amt)) +
+  geom_col(fill = "red", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Top 10 Cities by Fraud Amount",
+       x = "City", y = "Total Fraud Amount ($)") +
+  theme_minimal()
+```
+**Key Finding**: The graph shows the total fraud amount for cities, where Seattle leads followed by Aurora and Albuquerque, similarly indicating that cities differ in terms of transaction fraud amounts.
+
+## 2.5 Category Purchase Analysis
+```{r category-analysis, fig.height=4, fig.width=10}
+# Transaction frequency by category
+p1 <- fraud_df %>%
+  count(category, is_fraud) %>%
+  ggplot(aes(x = reorder(category, n), y = n, fill = is_fraud)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  coord_flip() +
+  labs(title = "Transaction Frequency by Category",
+       x = "Category", y = "Count", fill = "Status") +
+  theme_minimal()
+
+# Total amount by category
+p2 <- fraud_df %>%
+  group_by(category, is_fraud) %>%
+  summarise(total = sum(amt, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = reorder(category, total), y = total, fill = is_fraud)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  coord_flip() +
+  labs(title = "Total Amount by Category",
+       x = "Category", y = "Total Amount ($)", fill = "Status") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+**Key Finding**: The graph reveals interesting insights: firstly, grocery_pos is the category with the highest fraud frequency but in terms of value it places second. On the other hand, shopping_net has the highest fraud in terms of amount but is third highest for frequency. This shows that fraud frequency and amount are independent of each other.
+
+
+## 2.6 Hour Pattern Analysis
+```{r hour-analysis, fig.height=4, fig.width=10}
+hourly_summary <- fraud_df %>%
+  group_by(trans_hour, is_fraud) %>%
+  summarise(count = n(),total_amt = sum(amt, na.rm = TRUE),.groups = "drop")
+
+# Hourly trends - transaction count 
+p1 <- ggplot(fraud_df, aes(x = trans_hour, fill = is_fraud)) +
+  geom_histogram(binwidth = 1, position = "stack", color = "white", linewidth = 0.1) +
+  coord_flip() + 
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  scale_x_reverse(breaks = seq(0, 23, by = 1)) + 
+  labs(
+    title = "Hourly Transaction Count",
+    x = "Hour of Day (00:00 - 23:00)",
+    y = "Number of Transactions",
+    fill = "Status"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Hourly trends - transaction amount
+p2 <- fraud_df %>%
+  group_by(trans_hour, is_fraud) %>%
+  summarise(total_amt = sum(amt, na.rm = TRUE), .groups = 'drop') %>%
+  ggplot(aes(x = trans_hour, y = total_amt, fill = is_fraud)) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  coord_flip() + 
+  scale_fill_manual(values = c("Legit" = "steelblue", "Fraud" = "red")) +
+  scale_x_reverse(breaks = seq(0, 23, by = 1)) + 
+  scale_y_continuous(labels = label_dollar(scale = 1e-3, suffix = "K")) +
+  labs(
+    title = "Hourly Total Transaction Amount",
+    subtitle = "Financial volume ($) per hour",
+    x = "Hour of Day (00:00 - 23:00)",
+    y = "Total Amount ($)",
+    fill = "Status"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+**Key Finding**: Looking at frequency, the fraud count mainly concentrated in the late-night and early morning. Analyzing the transaction amounts, the number of transaction is relatively low at 10pm-12pm but the fraud amount is often disproportionately high.
+
+# 3. Data Preparation
+## 3.1 Data Cleaning
+```{r data-cleaning}
+# Remove duplicates and handle missing values
+fraud_clean <- fraud_raw %>%
+  distinct() %>%
+  filter(complete.cases(.))
+
+# Parse datetime and extract temporal features and age addition
+fraud_clean <- fraud_clean %>%
+  mutate(
+    trans_date = dmy_hm(trans_date_trans_time),
+    trans_year = year(trans_date),
+    trans_month = month(trans_date),
+    trans_day = day(trans_date),
+    trans_hour = hour(trans_date),
+    trans_weekday = wday(trans_date),
+    dob_date = dmy(dob)
+  )
+
+cat("Cleaned dataset:", nrow(fraud_clean), "rows\n")
+```
+**Description**: Firstly we remove duplicated values, then we extract temporal features from the existing dmy_hm column.
+
+## 3.2 Feature Engineering
+### 3.2.1 Temporal Features
+```{r temporal-features}
+# Encode hour and weekday as cyclical features
+fraud_clean <- fraud_clean %>%
+  mutate(
+    hour_sin = sin(2 * pi * trans_hour / 24),
+    hour_cos = cos(2 * pi * trans_hour / 24),
+    weekday_sin = sin(2 * pi * trans_weekday / 7),
+    weekday_cos = cos(2 * pi * trans_weekday / 7)
+  )
+
+# Add age features
+fraud_clean <- fraud_clean %>%
+  mutate(
+    age = year(trans_date) - year(dob_date)
+  )
+```
+**Description**: Temporal features are encoded as cyclical sine and cosine transformations to preserve the circular nature of time. Age is calculated from date of birth to transaction date.
+
+### 3.2.2 Geographic Distance Feature
+```{r geographic-distance-feature}
+# Calculate Haversine distance between transaction and cardholder locations
+fraud_clean <- fraud_clean %>%
+  rowwise() %>%
+  mutate(
+    distance_km = distHaversine(
+      c(long, lat),
+      c(merch_long, merch_lat)
+    ) / 1000
+  ) %>%
+  ungroup()
+
+cat("Distance feature created. Range:",
+    round(min(fraud_clean$distance_km, na.rm = TRUE), 2), "to",
+    round(max(fraud_clean$distance_km, na.rm = TRUE), 2), "km\n")
+```
+**Description**: Geographic distance is calculated using the Haversine formula to measure the distance between cardholder location and merchant location, which may indicate unusual transaction patterns.
+
+### 3.2.3 Fraud Rate Features
+```{r rate-features}
+# Add fraud rate per merchant
+merchant_fraud_rates <- fraud_clean %>%
+  group_by(merchant) %>%
+  summarise(
+    merchant_fraud_rate = mean(is_fraud, na.rm = TRUE),
+    merchant_trans_count = n()
+  )
+
+fraud_clean <- fraud_clean %>%
+  left_join(merchant_fraud_rates, by = "merchant")
+
+# Add fraud rate per job
+job_fraud_rates <- fraud_clean %>%
+  group_by(job) %>%
+  summarise(
+    job_fraud_rate = mean(is_fraud, na.rm = TRUE),
+    job_trans_count = n()
+  )
+
+fraud_clean <- fraud_clean %>%
+  left_join(job_fraud_rates, by = "job")
+```
+**Description**: Fraud rate features are engineered to capture historical fraud patterns associated with specific merchants and job categories, providing contextual risk indicators.
+
+## 3.3 Feature Selection
+```{r feature-selection}
+# Select features for modeling
+model_data <- fraud_clean %>%
+  select(
+    # Target variable
+    is_fraud,
+    # Numerical features
+    amt, distance_km, merchant_fraud_rate, merchant_trans_count,
+    job_fraud_rate, job_trans_count, city_pop, age,
+    # Cyclical features
+    hour_sin, hour_cos, weekday_sin, weekday_cos,
+    # Categorical features
+    category, state
+  )
+```
+**Description**: Out of the data's 32 columns, we filter and select only a handful of key features, grouping them by numerical features, cyclical temporal features, and categorical features.
+
+
+## 3.4 Categorical Variable Encoding
+```{r encoding}
+# One-hot encode categorical variables
+dummy_vars <- dummyVars(~ category + state, data = model_data, fullRank = TRUE)
+encoded_features <- predict(dummy_vars, newdata = model_data)
+```
+**Description**: For categorical data, we carry out one-hot encoding to convert them into numerical data since the large majority of models learn and perform better with numerical data, while some strictly require all data to be numerical.
+
+
+```{r final-dataset}
+model_features <- model_data %>%
+  select(-category, -state) %>%
+  bind_cols(as.data.frame(encoded_features))
+
+cat("Final feature count:", ncol(model_features) - 1, "features\n")
+```
+
+## 3.5 Train-Test Split (Stratified 70-30)
+```{r train-test-split}
+# Create stratified train-test split
+train_indices <- createDataPartition(
+  y = model_features$is_fraud,
+  p = 0.7,
+  list = FALSE
+)
+
+train_data <- model_features[train_indices, ]
+test_data <- model_features[-train_indices, ]
+
+cat("Training set:", nrow(train_data), "rows\n")
+cat("Test set:", nrow(test_data), "rows\n")
+cat("Train fraud rate:", round(mean(train_data$is_fraud) * 100, 2), "%\n")
+cat("Test fraud rate:", round(mean(test_data$is_fraud) * 100, 2), "%\n")
+```
+**Description**: Stratified sampling is chosen for better representation of the actual label distribution in both the train and test sets, which allows for more accurate performance evaluation.
+
+## 3.6 SMOTE Oversampling (Classification Only)
+```{r smote-oversampling}
+# 1. Prepare data for SMOTE (ensure target is numeric for the SMOTE function)
+train_X <- train_data %>% select(-is_fraud)
+train_y <- as.numeric(as.character(train_data$is_fraud))
+
+# 2. Apply SMOTE to balance classes
+# K=5 looks at 5 nearest neighbors; dup_size=5 creates 5 synthetic samples for each fraud case
+smote_result <- SMOTE(
+  X = train_X,
+  target = train_y,
+  K = 5,
+  dup_size = 5
+)
+
+# 3. Create balanced training set and FIX FACTOR NAMES IMMEDIATELY
+# This prevents the "X0, X1" error in caret later
+train_smote <- smote_result$data %>%
+  rename(is_fraud = class) %>%
+  mutate(is_fraud = factor(is_fraud, levels = c(0, 1), labels = c("Legit", "Fraud")))
+
+# 4. Fix test set names to match
+test_data <- test_data %>%
+  mutate(is_fraud = factor(is_fraud, levels = c(0, 1), labels = c("Legit", "Fraud")))
+
+cat("SMOTE applied and Factor Labels fixed:\n")
+cat("  New Class Levels:", levels(train_smote$is_fraud), "\n")
+cat("  SMOTE fraud rate:", round(mean(train_smote$is_fraud == "Fraud") * 100, 2), "%\n")
+```
+**Description**: SMOTE (Synthetic Minority Over-sampling Technique) is applied to the minority class to upsample the fraud label. This is a common and effective strategy in tackling imbalanced data, whereby through upsampling of the minority label we attempt to provide balanced representation for the model to learn.
+
+## 3.7 Feature Scaling
+```{r feature-scaling}
+# Identify numeric features
+numeric_features <- c("amt", "distance_km", "merchant_fraud_rate", "merchant_trans_count",
+                      "job_fraud_rate", "job_trans_count", "city_pop", "age",
+                      "hour_sin", "hour_cos", "weekday_sin", "weekday_cos")
+
+# 1. Fit scaler ONLY on the training data to prevent data leakage
+scaler <- preProcess(train_smote[, numeric_features], method = c("center", "scale"))
+
+# 2. Transform the datasets
+train_smote_scaled <- train_smote
+train_smote_scaled[, numeric_features] <- predict(scaler, train_smote[, numeric_features])
+
+test_scaled <- test_data
+test_scaled[, numeric_features] <- predict(scaler, test_data[, numeric_features])
+
+# 3. Final Safety Check for NAs
+# This ensures the na.fail error doesn't stop your training
+if(any(is.na(train_smote_scaled))) {
+  train_smote_scaled <- na.omit(train_smote_scaled)
+  cat("Dropped rows with NAs in training set.\n")
+}
+
+cat("Feature scaling completed. Training samples:", nrow(train_smote_scaled), "\n")
+
+# Verify naming convention for caret
+print(head(train_smote_scaled$is_fraud))
+```
+**Description**: Scaling is important to enable all numerical variables to be in a similar range, preventing variables with much higher values from dominating those with smaller values, ensuring fairer learning for the model.
+
+
+# 4. Classification Analysis: Fraud Detection
+**Goal**: Develop binary classification model(s) that accurately identify whether a transaction is fraudulent or legitimate.
+```{r training-and-test-data-preparation}
+# Prepare matrices for XGBoost
+# Use the updated text labels "Fraud" to create the numeric 0/1 vector
+X_train_mat <- as.matrix(train_smote_scaled %>% select(-is_fraud))
+y_train <- ifelse(train_smote_scaled$is_fraud == "Fraud", 1, 0)
+
+X_test_mat <- as.matrix(test_scaled %>% select(-is_fraud))
+y_test <- ifelse(test_scaled$is_fraud == "Fraud", 1, 0)
+
+# Safety check: Ensure y_train contains both 0 and 1
+cat("Distribution of labels in y_train:\n")
+print(table(y_train))
+
+# Convert y_test to factor for confusion matrix (matches the "Legit"/"Fraud" format)
+y_test_factor <- factor(y_test, levels = c(0, 1), labels = c("Legit", "Fraud"))
+
+# Create DMatrices
+dtrain <- xgb.DMatrix(data = X_train_mat, label = y_train)
+dtest <- xgb.DMatrix(data = X_test_mat, label = y_test)
+
+evaluation_results <- data.frame()
+all_predictions <- list()
+```
+
+## 4.1 Model Training
+### 4.1.1 XGBoost
+```{r classification-xgboost}
+dtrain <- xgb.DMatrix(data = X_train_mat, label = y_train)
+dtest <- xgb.DMatrix(data = X_test_mat, label = y_test)
+xgb <- xgb.train(
+  params = list(objective = "binary:logistic", eval_metric = "logloss",
+                max_depth = 4, eta = 0.1),
+  data = dtrain, nrounds = 100, verbose = 0
+)
+# Predict
+xgb_pred <- predict(xgb, dtest)
+
+# Use text labels "Fraud" and "Legit"
+xgb_pred_class <- factor(ifelse(xgb_pred > 0.5, "Fraud", "Legit"), levels = c("Legit", "Fraud"))
+
+# Change positive to "Fraud"
+xgb_cm <- confusionMatrix(xgb_pred_class, y_test_factor, positive = "Fraud")
+
+evaluation_results <- rbind(evaluation_results, data.frame(
+  Model = "XGBoost",
+  ROC_AUC = auc(roc(y_test, xgb_pred, quiet = TRUE)),
+  Accuracy = as.numeric(xgb_cm$overall["Accuracy"]),
+  Precision = as.numeric(xgb_cm$byClass["Pos Pred Value"]),
+  Recall = as.numeric(xgb_cm$byClass["Sensitivity"]),
+  F1_Score = as.numeric(xgb_cm$byClass["F1"])
+))
+all_predictions[["XGBoost"]] <- xgb_pred
+```
+
+### 4.1.2 Random Forest
+```{r classification-rf}
+rf <- randomForest(is_fraud ~ ., data = train_smote_scaled, ntree = 100)
+
+# Get probabilities for the "Fraud" column
+rf_pred <- predict(rf, test_scaled, type = "prob")[, "Fraud"]
+
+# Use text labels
+rf_pred_class <- factor(ifelse(rf_pred > 0.5, "Fraud", "Legit"), levels = c("Legit", "Fraud"))
+
+# Change positive to "Fraud"
+rf_cm <- confusionMatrix(rf_pred_class, y_test_factor, positive = "Fraud")
+
+evaluation_results <- rbind(evaluation_results, data.frame(
+  Model = "Random Forest",
+  ROC_AUC = auc(roc(y_test, rf_pred, quiet = TRUE)),
+  Accuracy = as.numeric(rf_cm$overall["Accuracy"]),
+  Precision = as.numeric(rf_cm$byClass["Pos Pred Value"]),
+  Recall = as.numeric(rf_cm$byClass["Sensitivity"]),
+  F1_Score = as.numeric(rf_cm$byClass["F1"])
+))
+all_predictions[["Random Forest"]] <- rf_pred
+```
+
+### 4.1.3 Logistic Regression
+```{r classification-lr}
+lr <- glm(is_fraud ~ ., data = train_smote_scaled, family = binomial)
+lr_pred <- predict(lr, test_scaled, type = "response")
+
+# Use text labels
+lr_pred_class <- factor(ifelse(lr_pred > 0.5, "Fraud", "Legit"), levels = c("Legit", "Fraud"))
+
+# Change positive to "Fraud"
+lr_cm <- confusionMatrix(lr_pred_class, y_test_factor, positive = "Fraud")
+
+evaluation_results <- rbind(evaluation_results, data.frame(
+  Model = "Logistic Regression",
+  ROC_AUC = auc(roc(y_test, lr_pred, quiet = TRUE)),
+  Accuracy = as.numeric(lr_cm$overall["Accuracy"]),
+  Precision = as.numeric(lr_cm$byClass["Pos Pred Value"]),
+  Recall = as.numeric(lr_cm$byClass["Sensitivity"]),
+  F1_Score = as.numeric(lr_cm$byClass["F1"])
+))
+all_predictions[["Logistic Regression"]] <- lr_pred
+```
+
+## 4.2 Evaluation Metrics
+```{r classification-evaluation-metrics}
+evaluation_results <- evaluation_results %>%
+  mutate(ROC_AUC = as.numeric(ROC_AUC),
+         Accuracy = as.numeric(Accuracy),
+         Precision = as.numeric(Precision),
+         Recall = as.numeric(Recall),
+         F1_Score = as.numeric(F1_Score))
+print(evaluation_results)
+```
+
+```{r classification-plot-evaluation-metrics, fig.height=4, fig.width=10}
+# Reshape data to long format for grouped bars
+class_results_long <- evaluation_results %>%
+  select(Model, ROC_AUC, Accuracy, Precision, Recall, F1_Score) %>%
+  pivot_longer(cols = c(ROC_AUC, Accuracy, Precision, Recall, F1_Score),
+               names_to = "Metric",
+               values_to = "Value")
+
+# Create clustered bar chart
+ggplot(class_results_long, aes(x = Metric, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Comparison of Classification Evaluation Metrics",
+       x = "Metric", y = "Value") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+**Key Finding**: By plotting the evaluation metrics for each model, it is evident that XGBoost has the best performance in 4 out of the 5 metrics, namely Accuracy, F1_Score, Recall, and ROC_AUC, except Precision. In terms of Precision, Random Forest performs the best. Overall, XGBoost is the best performing model for the classification task. We performed hyperparameter tuning to further optimize its ability to distinguish between legitimate and fraudulent transactions.
+
+
+## 4.3 Hyperparameter Tuning
+Using the tidymodels framework, we conducted a Grid Search with 5-fold Cross-Validation to refine the model:
+
+trees: The total number of boosting iterations.
+tree_depth: The complexity of the individual decision trees.
+learn_rate: The speed at which the model adapts to errors from previous trees.
+
+```{r xgboost-hyperparameter tuning, fig.height=4, fig.width=10}
+
+# 1. Define model specification (stays the same)
+xgb_spec <- boost_tree(
+  trees = tune(), 
+  tree_depth = tune(), 
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+# 2. Define grid (FIXED: Added learn_rate)
+xgb_grid <- grid_regular(
+  trees(range = c(100, 200)),
+  tree_depth(range = c(3, 9)),
+  learn_rate(range = c(-2, -1)), # This uses 10^-2 (0.01) to 10^-1 (0.1)
+  levels = 5
+)
+
+# 3. Create cross-validation folds
+set.seed(123)
+cv_folds <- vfold_cv(train_smote_scaled, v = 5, strata = is_fraud)
+
+# 4. Tune the grid
+xgb_results <- tune_grid(
+  object = xgb_spec,
+  preprocessor = is_fraud ~ .,
+  resamples = cv_folds,
+  grid = xgb_grid,
+  metrics = metric_set(roc_auc, f_meas, pr_auc) # Added more metrics for fraud
+)
+
+# 5. View the top 5 results
+show_best(xgb_results, metric = "roc_auc")
+
+# 6. Select the single best parameter set
+best_xgb <- select_best(xgb_results, metric = "roc_auc")
+
+# 7. Finalize the model with those parameters
+final_xgb <- finalize_model(xgb_spec, best_xgb)
+
+# 8. Fit the final model to the full training data
+final_fit <- final_xgb %>%
+  fit(is_fraud ~ ., data = train_smote_scaled)
+```
+**Key Finding**: By testing 25 different combinations of these parameters, we identified an optimal configuration (trees = 175, tree_depth = 7, learn_rate = 0.1) that achieved a Mean ROC AUC of 0.9995.
+
+## 4.4 Finalizing the model
+```{r xgboost-finalizing model, fig.height=4, fig.width=10}
+# 1. Select the best parameters based on ROC AUC
+best_params <- select_best(xgb_results, metric = "roc_auc")
+
+# 2. Finalize the specification
+final_xgb_spec <- finalize_model(xgb_spec, best_params)
+
+# 3. Fit the model to the ENTIRE training set (SMOTE version)
+final_model_fit <- final_xgb_spec %>%
+  fit(is_fraud ~ ., data = train_smote_scaled)
+```
+We lock in the parameters of trees = 175, tree_depth = 7, and learn_rate = 0.1
+
+## 4.5 Final prediction on test set
+```{r xgboost-final_prediction_on_test_set, fig.height=4, fig.width=10}
+# 4. Generate class predictions (Legit/Fraud)
+final_preds_class <- predict(final_model_fit, new_data = test_scaled)
+
+# 5. Generate probability predictions
+final_preds_prob <- predict(final_model_fit, new_data = test_scaled, type = "prob")
+
+# 6. Combine for evaluation
+final_results <- test_scaled %>%
+  select(is_fraud) %>%
+  bind_cols(final_preds_class, final_preds_prob)
+
+# Using caret for the final report
+conf_mat_final <- confusionMatrix(
+  final_results$.pred_class, 
+  final_results$is_fraud, 
+  positive = "Fraud"
+)
+
+print(conf_mat_final)
+```
+
+```{r xgboost-performanc, fig.height=4, fig.width=10}
+# 1. Extract Confusion Matrix Data
+# 'final_results' contains the predicted class and the probabilities
+cm_final <- confusionMatrix(final_results$.pred_class, 
+                             final_results$is_fraud, 
+                             positive = "Fraud")
+
+cm_table_tuned <- as.data.frame(cm_final$table)
+
+# Plot 1: Confusion Matrix Heatmap
+p1 <- ggplot(cm_table_tuned, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6) +
+  scale_fill_gradient(low = "steelblue", high = "darkred") +
+  labs(title = "Tuned XGBoost: Confusion Matrix",
+       x = "Actual Status", y = "Predicted Status") +
+  theme_minimal()
+
+# 2. Extract Probabilities for ROC and PR
+# Note: final_results$.pred_Fraud contains the probability of the transaction being fraud
+probs_tuned <- final_results$.pred_Fraud
+actuals_tuned <- ifelse(final_results$is_fraud == "Fraud", 1, 0)
+
+# Plot 2: ROC Curve
+roc_obj_tuned <- roc(actuals_tuned, probs_tuned)
+p2 <- ggroc(roc_obj_tuned, colour = "blue", size = 1.2) +
+  labs(title = paste("Tuned ROC (AUC =", round(auc(roc_obj_tuned), 4), ")")) +
+  theme_minimal()
+
+# Plot 3: Precision-Recall Curve
+pr_tuned <- pr.curve(scores.class0 = probs_tuned[actuals_tuned == 1],
+                     scores.class1 = probs_tuned[actuals_tuned == 0],
+                     curve = TRUE)
+pr_df_tuned <- data.frame(Recall = pr_tuned$curve[,1], Precision = pr_tuned$curve[,2])
+
+p3 <- ggplot(pr_df_tuned, aes(x = Recall, y = Precision)) +
+  geom_line(color = "darkgreen", size = 1.2) +
+  labs(title = "Tuned Precision-Recall Curve",
+       x = "Recall", y = "Precision") +
+  theme_minimal()
+
+# Combined Multi-Panel View
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+**Key Finding**: The final model achieved ROC AUC of 0.9963, indicating reliability in distinguishing between legitimate and fraudulent transactions. Operationally, the model maintains a superior balance between security and user experience, catching approximately 93% of all fraud while ensuring that 94.5% of flags are accurate, thereby protecting financial assets while minimizing unnecessary friction for legitimate customers.
+
+## 4.6 Feature Importance
+```{r xgboost-feature-importance, fig.height=4, fig.width=10}
+library(vip)
+
+# 1. Extract the underlying engine fit and get importance
+# This retrieves the importance scores from the tuned XGBoost engine
+xgb_imp_data <- final_model_fit %>%
+  extract_fit_engine() %>%
+  vi()
+
+# 2. View the importance values (Gain, Cover, Frequency)
+print(xgb_imp_data)
+
+# 3. Create a polished ggplot2-based importance plot
+p_imp <- final_model_fit %>%
+  extract_fit_engine() %>%
+  vip(num_features = 20, geom = "point", aesthetics = list(color = "darkred", size = 3)) +
+  labs(title = "Tuned XGBoost - Top 20 Feature Importance",
+       subtitle = "Based on Gain (Contribution to Model Accuracy)",
+       x = "Features",
+       y = "Importance Score") +
+  theme_minimal()
+
+print(p_imp)
+```
+**Key Finding**: The feature 'amt' has significantly higher predictive power than the others, approximately 4x greater than the second highest. This indicates that the model relies most heavily on transaction amount when making predictions. Another insight is that many features are temporal-related, such as hour_cos, hour_sin, and weekday_cos, signifying that the duration and time when fraud occurs do contribute to the model's prediction.
+
+
+## 4.7 SHAP
+```{r xgboost-SHAP, fig.height=4, fig.width=10}
+# 1. Ensure the matrix is numeric and has names
+X_test_mat <- as.matrix(test_scaled %>% select(-is_fraud))
+colnames(X_test_mat) <- colnames(test_scaled %>% select(-is_fraud))
+
+# 2. Extract engine and calculate values
+final_engine <- extract_fit_engine(final_model_fit)
+shap_results <- shap.values(xgb_model = final_engine, X_train = X_test_mat)
+
+# 3. Use the top 10 features to simplify the plot and avoid internal naming conflicts
+shap_long <- shap.prep(xgb_model = final_engine, X_train = X_test_mat, top_n = 10)
+
+# 4. Generate the plot
+shap.plot.summary(shap_long)
+```
+**Key Finding**: High transaction amounts (yellow/orange dots) are strongly associated with a higher SHAP value, meaning larger transactions significantly increase the probability of being flagged as fraud.
+
+merchant_fraud_rate: This is the second most impactful feature. Transactions at merchants with historically high fraud rates strongly push the model toward a fraud prediction.
+
+hour_cos and hour_sin: These features show a wide spread of impact. The purple clusters on the right for hour_cos suggest that specific times of the day (likely late-night or early-morning hours) are strong indicators of fraudulent activity.
+
+# 5. Regression Analysis: Amount Prediction
+**Goal**: Develop regressor models that predict the transaction amount.
+```{r regression-data-prep}
+# Use original train/test split without SMOTE
+train_reg <- train_data
+test_reg <- test_data
+
+# Standardize features for regression
+train_reg_scaled <- train_reg
+train_reg_scaled[, numeric_features] <- predict(scaler, train_reg[, numeric_features])
+test_reg_scaled <- test_reg
+test_reg_scaled[, numeric_features] <- predict(scaler, test_reg[, numeric_features])
+
+# Remove is_fraud and amt columns for regression features
+X_train_reg <- train_reg_scaled %>% select(-is_fraud, -amt)
+y_train_reg <- train_reg_scaled$amt
+X_test_reg <- test_reg_scaled %>% select(-is_fraud, -amt)
+y_test_reg <- test_reg_scaled$amt
+
+# Convert to matrices for glmnet and xgboost
+X_train_reg_mat <- as.matrix(X_train_reg)
+X_test_reg_mat <- as.matrix(X_test_reg)
+
+cat("Regression data prepared:\n")
+cat("  Training samples:", nrow(X_train_reg), "\n")
+cat("  Test samples:", nrow(X_test_reg), "\n")
+
+
+reg_evaluation_results <- data.frame()
+all_reg_predictions <- list()
+```
+
+## 5.1 Model Training
+### 5.1.1 Linear Regression (Elastic Net)
+```{r regression-elastic-net}
+elastic_reg <- cv.glmnet(X_train_reg_mat, y_train_reg, alpha = 0.5)
+elastic_reg_pred <- predict(elastic_reg, X_test_reg_mat, s = "lambda.min")
+elastic_reg_pred <- as.vector(elastic_reg_pred)
+
+elastic_reg_rmse <- sqrt(mean((elastic_reg_pred - y_test_reg)^2))
+elastic_reg_mae <- mean(abs(elastic_reg_pred - y_test_reg))
+elastic_reg_r2 <- cor(elastic_reg_pred, y_test_reg)^2
+
+reg_evaluation_results <- rbind(reg_evaluation_results, data.frame(
+  Model = "Elastic Net",
+  RMSE = elastic_reg_rmse,
+  MAE = elastic_reg_mae,
+  R2 = elastic_reg_r2
+))
+all_reg_predictions[["Elastic Net"]] <- elastic_reg_pred
+```
+
+### 5.1.2 Random Forest
+```{r regression-rf}
+rf_reg <- randomForest(amt ~ ., data = train_reg_scaled %>% select(-is_fraud),
+                       ntree = 100)
+rf_reg_pred <- predict(rf_reg, test_reg_scaled)
+
+rf_reg_rmse <- sqrt(mean((rf_reg_pred - y_test_reg)^2))
+rf_reg_mae <- mean(abs(rf_reg_pred - y_test_reg))
+rf_reg_r2 <- cor(rf_reg_pred, y_test_reg)^2
+
+reg_evaluation_results <- rbind(reg_evaluation_results, data.frame(
+  Model = "Random Forest",
+  RMSE = rf_reg_rmse,
+  MAE = rf_reg_mae,
+  R2 = rf_reg_r2
+))
+all_reg_predictions[["Random Forest"]] <- rf_reg_pred
+```
+
+### 5.1.3 XGBoost
+```{r regression-xgboost}
+X_train_reg_mat <- as.matrix(X_train_reg)
+X_test_reg_mat <- as.matrix(X_test_reg)
+dtrain_reg <- xgb.DMatrix(data = X_train_reg_mat, label = y_train_reg)
+dtest_reg <- xgb.DMatrix(data = X_test_reg_mat, label = y_test_reg)
+
+xgb_reg_base <- xgb.train(
+  params = list(objective = "reg:squarederror", eval_metric = "rmse",
+                max_depth = 4, eta = 0.1),
+  data = dtrain_reg, nrounds = 100, verbose = 0
+)
+xgb_reg_pred <- predict(xgb_reg_base, dtest_reg)
+
+xgb_reg_rmse <- sqrt(mean((xgb_reg_pred - y_test_reg)^2))
+xgb_reg_mae <- mean(abs(xgb_reg_pred - y_test_reg))
+xgb_reg_r2 <- cor(xgb_reg_pred, y_test_reg)^2
+
+reg_evaluation_results <- rbind(reg_evaluation_results, data.frame(
+  Model = "XGBoost",
+  RMSE = xgb_reg_rmse,
+  MAE = xgb_reg_mae,
+  R2 = xgb_reg_r2
+))
+all_reg_predictions[["XGBoost"]] <- xgb_reg_pred
+```
+
+## 5.2 Evaluation Metrics
+```{r regression-evaluation-metrics}
+print(reg_evaluation_results)
+```
+
+```{r plot-evaluation-metrics, fig.height=4, fig.width=10}
+# Reshape data to long format for grouped bars
+reg_results_long <- reg_evaluation_results %>%
+  select(Model, RMSE, MAE, R2) %>%
+  pivot_longer(cols = c(RMSE, MAE, R2),
+               names_to = "Metric",
+               values_to = "Value")
+
+# Create clustered bar chart
+ggplot(reg_results_long, aes(x = Metric, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Comparison of Regression Evaluation Metrics",
+       x = "Metric", y = "Value") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+**Key Finding**: Through plotting of the evaluation metrics, Random Forest has the best performance for all 3 metrics, including lowest MAE, highest R2, and lowest RMSE, indicating that Random Forest is the best model overall. XGBoost is the second best-performing model with performance that is slightly lower, while Elastic Net has the worst performance due to its simplicity and limitation in capturing complex relationships.
+
+## 5.3 Hyperparameter Tuning
+Similar to the previous classification model, hyperparameter tuning was performed using the tidymodels framework with 5‑fold cross‑validation and 1000 decision trees against the Random Forest model. The objective was to identify the optimal combination of the number of predictors randomly sampled at each split (mtry) and the minimum number of observations required in terminal (leaf) nodes (min_n).
+```{r regression-hyperparameter-tuning}
+#1. Preparing the data
+train_reg_tidy <- train_reg_scaled %>% select(-is_fraud)
+test_reg_tidy  <- test_reg_scaled %>% select(-is_fraud)
+
+#2. Defining the tuning parameters
+rf_spec <- rand_forest(
+  mtry = tune(),        # number of predictors at each split
+  trees = 1000,          # number of trees 1000
+  min_n = tune()        # minimum node size
+) %>%
+  set_engine("randomForest") %>%
+  set_mode("regression")
+
+#3. Setting the recipe and workflow
+rf_recipe <- recipe(amt ~ ., data = train_reg_tidy)
+
+rf_workflow <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_recipe(rf_recipe)
+
+#4. Tuning the grid
+rf_grid <- grid_regular(
+  mtry(range = c(2, floor(ncol(train_reg_tidy) / 3))),   # try between 2 and total predictors/3 predictors
+  min_n(range = c(2, 10)), # try node sizes between 2 and 10
+  levels = 5               # number of values per parameter
+)
+
+#5. Setting cross-validation folds
+set.seed(123)
+cv_folds <- vfold_cv(train_reg_tidy, v = 5)
+
+#6. Execute tuning
+rf_tuned <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid = rf_grid,
+  metrics = metric_set(rmse, rsq, mae)
+)
+
+#7. Showing the best result
+best_rf <- select_best(rf_tuned, metric = "rmse")
+best_rf
+```
+## 5.4 Finalising the model
+Based on the best fit, the parameters are locked with the values of mtry=`r best_rf["mtry"]` and min_n=`r best_rf["min_n"]`.
+```{r regression-finalising-the-model}
+#1. Finalize workflow with best parameters
+final_rf_workflow <- finalize_workflow(rf_workflow, best_rf)
+
+#2. Fit on full training set
+rf_final_fit <- fit(final_rf_workflow, data = train_reg_tidy)
+```
+## 5.5 Final prediction on test set
+The comparison performance tabulated and presented in a comparison chart.
+```{r regression-final-prediction-on-test}
+#1. Predict on test set
+rf_preds <- predict(rf_final_fit, test_reg_tidy) %>%
+  bind_cols(test_reg_tidy %>% select(amt))
+
+#2. Display the metrics
+metrics <- rf_preds %>%
+  metrics(truth = amt, estimate = .pred)
+
+metrics_comp <- cbind(metrics,"before"=c(rf_reg_rmse, rf_reg_r2, rf_reg_mae)) %>% rename(after=.estimate) %>% select (-.estimator)
+metrics_comp[metrics_comp[".metric"]=="rsq",1]="r2"
+metrics_comp
+```
+
+```{r regression-final-prediction-on-test-comparison-chart, fig.height=4, fig.width=10}
+#1. Reshape to long format
+metrics_long <- metrics_comp %>%
+  pivot_longer(cols = c(after, before),
+               names_to = "Stage", values_to = "Value") %>%
+  mutate(.metric = toupper(.metric))   # convert to uppercase
+
+#2. Plot the comparison chart
+ggplot(metrics_long, aes(x = .metric, y = Value, fill = Stage)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = round(Value, 3)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.3, size = 3) +
+  labs(
+    title = "Performance Comparison of Model Before and After Hyperparameter Tuning",
+    x = "Metric",
+    y = "Value",
+    fill = "Stage"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+**Key Finding:** A marginal improvement was achieved through hyperparameter tuning. However, the moderate R² alongside relatively large RMSE and MAE indicate that the predictive capability of the model for transaction amount is moderately useful.  
+
+
+## 5.6 Feature Importance
+```{r regression-feature-importance-randomforest-table, fig.height=4, fig.width=10}
+# Get feature importance from the trained RandomForest model
+
+#1. Extract fitted RF model from workflow
+rf_model <- extract_fit_parsnip(rf_final_fit)$fit
+
+#2. Get importance scores and convert to tibble
+importance_tbl <- importance(rf_model) %>%
+  as.data.frame() %>%
+  rownames_to_column("Feature") %>%
+  arrange(desc(IncNodePurity))   # sort by importance
+
+#3. Show top 20 features
+top20_tbl <- importance_tbl %>% slice(1:20)
+
+print(top20_tbl)
+```
+```{r feature-importance-xgboost-chart, fig.height=4, fig.width=10}
+p_imp <- rf_final_fit %>%
+  extract_fit_engine() %>%
+  vip(
+    num_features = 20,
+    geom = "point",
+    aesthetics = list(color = "darkred", size = 3)
+  ) +
+  labs(
+    title = "Tuned Random Forest - Top 20 Feature Importance",
+    subtitle = "Based on IncNodePurity (Variance Reduction)",
+    x = "Features",
+    y = "Importance Score"
+  ) +
+  theme_minimal()
+
+print(p_imp)
+```
+**Key Finding**: The top predictor is merchant_fraud_rate which indicates that establishing fraud rate metrics is a valuable approach. Temporal features such as hour_sin and hour_cos are the next strongest predictors, highlighting the importance of transaction timing in estimating transaction amounts. Together, these three predictors demonstrate roughly one third stronger predictive strength compared to the remaining features.
+
+## 5.7 SHAP
+```{r regression-SHAP, fig.height=4, fig.width=10}
+#1. Define a prediction wrapper function
+p_fun <- function(object, newdata) {
+  predict(object, newdata) %>%
+    pull(.pred) # extract the numeric prediction column from tidymodels 
+}
+
+#2. Calculate SHAP values
+X_test <- test_reg_tidy %>% select(-amt) # excluding the target variable
+
+shap_values <- explain(
+  rf_final_fit, 
+  X = as.matrix(X_test), 
+  pred_wrapper = p_fun, 
+  nsim = 50, # Number of Monte Carlo repetitions; higher is more accurate but slower
+  adjust = TRUE
+)
+
+#4. Create a shapviz object for plotting
+shp <- shapviz(shap_values, X = as.matrix(X_test))
+
+#5. Plot the Beeswarm Chart
+sv_importance(shp, kind = "beeswarm") +
+  theme_minimal() +
+  labs(title = "SHAP Feature Importance (Beeswarm Plot)")
+
+```
+**Key Finding:**Merchant_fraud_rate again emerges as the strongest predictor, with higher values consistently driving higher predicted transaction amounts. Temporal features such as hour_cos and hour_sin also rank among the most influential, indicating that the time of day plays a key role in shaping transaction behavior, with certain hours contributing more strongly to larger spending. Shopping categories such as categoryshopping_net (internet transactions) and categoryshopping_pos (point‑of‑sale retail) further demonstrate notable predictive impact particularly in association with higher transaction amounts.
+
+
+# 6. Conclusion
+
+This project successfully developed machine learning solutions for credit card fraud detection and transaction amount prediction, achieving strong performance across both tasks.
+
+## Classification Task (Fraud Detection)
+- **XGBoost emerged as the best-performing classifier**, achieving superior performance in Accuracy, F1-Score, Recall, and ROC-AUC metrics. This demonstrates its effectiveness in identifying fraudulent transactions while balancing precision and recall.
+- **Transaction amount (amt) is the most predictive feature**, showing approximately 4x greater importance than the second-ranked feature. This validates the EDA finding that fraudulent transactions tend to involve significantly higher amounts (mean of $518 vs $66 for legitimate transactions).
+- **Temporal features play a critical role**, with hour_sin, hour_cos, and weekday_cos ranking among the top predictors, suggesting that fraud patterns exhibit distinct temporal signatures.
+
+## Regression Task (Amount Prediction)
+- **Random Forest achieved the best regression performance** across all metrics (lowest RMSE, lowest MAE, highest R²), followed closely by XGBoost. This indicates that ensemble tree-based methods effectively capture the complex relationships between features and transaction amounts.
+- **Fraud rate features (merchant_fraud_rate, job_fraud_rate) contribute significantly**, as top predictors demonstrating that historical fraud patterns provide valuable context for understanding transaction amounts.
+- **Temporal features dominate amount prediction**, with hour_sin and hour_cos being the top three predictive features. This suggests that transaction amounts vary systematically throughout the day.
+- **Overal**, with relatively modest performance metrics (R²=`r round(metrics$.estimate[metrics$.metric == "rsq"], 4)`), the regression model is best positioned as a supplementary tool that highlights the main predictors associated with higher transaction amounts. These insights are valuable, as they point to potential risk factors in cases where transactions may be fraudulent. Overall, this outcome aligns well with the project’s objectives by providing interpretability and actionable guidance, even if predictive accuracy is not the primary strength.
+
+## Limitations
+- The dataset covers a limited temporal window seasonal, in which fraud patterns beyond the observed months may exist.
+- Limited feature engineering fully relied on domain knowledge.
+- SMOTE oversampling although effective but still generates synthetic samples that may not fully represent real-world fraud diversity.
+
