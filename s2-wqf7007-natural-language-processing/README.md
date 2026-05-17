@@ -80,4 +80,16 @@
         - Able to interpret intent.
 
 6. Word Vectorisation
-    - ![alt text](image.png)
+    - Traditional Count-based Methods
+        1. Bag of Words (BoW)
+        2. TF-IDF (Term Frequency Inverse Document Frequency)
+    - Prediction-Based Word Embeddings
+        1. Word2Vec (CBOW, Skip-gram)
+        2. GloVe (Global Vectors for Word Representation)
+        3. FastText
+    - Contextualized Word Embeddings
+        1. ELMO (Embeddings from Language Models)
+        2. Transformers
+            - Encoded only (BERT, RoBERTa)
+            - Encoder + Decoder (BART, T5)
+            - Decoder only (GPT-4, LLama)
