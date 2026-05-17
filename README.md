@@ -10,3 +10,12 @@ Courses completed:
 3. WQD7003 - Data Analytics
 4. WQD7004 - Programming for Data Science
 5. WQD7009 - Big Data Applications and Analytics
+
+## Second Semester
+Duration: 9th March 2026 - Current
+
+Courses on-going:
+1. WQD7007 - Big Data Management
+2. WQD7012 - Applied Machine Learning
+3. WQD7013 - Statistics for Data Science
+4. WQF7007 - Natural Language Processing
