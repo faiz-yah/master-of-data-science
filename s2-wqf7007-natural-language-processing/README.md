@@ -93,3 +93,27 @@
             - Encoded only (BERT, RoBERTa)
             - Encoder + Decoder (BART, T5)
             - Decoder only (GPT-4, LLama)
+
+7. Language Models
+    - A language model is a statistical or neural model that assigns probabilities to sequences of words helping predict the likelihood of the next word in a sentence based on the previous words.
+    - (1) Statistical Language Models (N-gram models)
+        - Based on counting word frequencies
+        - N-grams vs Collocations
+    - (2) Neural Language Models
+        - A type of language model that uses neural networks to learn the probability distribution of word sequences.
+        - 3 key components:
+            1. Word Embeddings
+            2. Contextual Modelling
+            3. Probability Output
+    - (3) Transformer-based Language Models
+        - Transformers are deep learning models designed to handle sequences using self-attention, using an encoder-decoder structure.
+        - GPT (Generative Pre-trained Transformer)
+            - Primary task is text generation (generative)
+            - Pre-trained on massive text corpora (books, websites, etc.)
+            - Decoder-only Transformer architecture trained as a causal language model (CLM)  to predict the next token in a sequence.
+        - BERT (Bidirectional Encoder Representations from Transformers)
+            - Primary task is classification, question answering
+            - Designed to understand the context of a sentence by looking at words in both directions
+            - Uses only the encoder part of the Transformer
+        - Finetune vs Pre-trained
+        - Transfer learning
