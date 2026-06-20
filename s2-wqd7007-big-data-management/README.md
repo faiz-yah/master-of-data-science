@@ -8,5 +8,7 @@
 6. Distributed Computing 
 7. HBase
 8. NoSQL and MongoDB
-9. Hive
+9. Apache Hive
 10. Apache Pig
+11. Apache Spark
+12. Data Provenance and Data Trustworthiness
