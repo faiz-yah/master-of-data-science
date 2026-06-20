@@ -117,3 +117,30 @@
             - Uses only the encoder part of the Transformer
         - Finetune vs Pre-trained
         - Transfer learning
+
+8. AI and NLP Ethics
+    - Ethics: Moral principles that guide how AI systems should be designed, deployed and used
+    - Questions to ponder:
+        - (1) Are AI systems fair? (Bias, discrimination, manipulation)
+        - (2) Can we trust what the AI says? (Misinformation, hallucination, privacy infringement)
+        - (3) Who is responsible when things go wrong?
+    - Principles:
+        - (1) Privacy: Protect user data and ensure consent
+        - (2) Fairness: Avoid discrimination
+        - (3) Transparency: AI behavior understandable
+        - (4) Accountability: Define responsibility when AI goes wrong
+        - (5) Non-maleficence: Ensure no harm caused directly or indirectly
+    - Bias and Fairness
+        - Types of bias:
+            - (1) Learning Bias
+            - (2) Evaluation Bias
+            - (3) Aggregation Bias
+            - (4) Deployment Bias
+            - (5) Gender Bias
+        - Mitigation:
+            - (1) Data Balancing
+            - (2) De-biasing Word Embeddings
+            - (3) Prompt Engineering
+    - Societal and Cultural Impact
+        - NLP models trained mostly on Western English content fail to recognize or respect non-Western cultural contexts
+    - Accessibility and Inclusivity
